@@ -20,7 +20,6 @@ export default function Page() {
 
   const camRef = useRef<HTMLDivElement>(null);
   const crowdCanvas = useRef<HTMLCanvasElement>(null);
-  // biome-ignore lint/suspicious/noExplicitAny: holds live runtime instances of various module classes
   const refs = useRef<any>({});
 
   useEffect(() => {

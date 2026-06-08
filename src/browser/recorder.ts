@@ -21,7 +21,6 @@ export interface RecordSources {
 export class Recorder {
   private canvas = document.createElement("canvas");
   private raf = 0;
-  private rec: MediaRecorder | null = null;
 
   async record(src: RecordSources, ms = 15000): Promise<Blob> {
     this.canvas.width = src.width;
@@ -37,7 +36,6 @@ export class Recorder {
     const stream = this.canvas.captureStream(30);
     for (const tr of src.audio.getAudioTracks()) stream.addTrack(tr);
     const rec = new MediaRecorder(stream, { mimeType: mime });
-    this.rec = rec;
     const chunks: BlobPart[] = [];
     rec.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
