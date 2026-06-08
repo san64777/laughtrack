@@ -7,3 +7,12 @@ dist
 .env*
 .playwright-mcp
 .superpowers/
+
+# next.js / node (merged from create-next-app)
+/out/
+/build
+/coverage
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+*.pem
