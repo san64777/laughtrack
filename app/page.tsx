@@ -30,6 +30,13 @@ export default function Page() {
     }
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stopLive only touches the refs object and stable state setters
+  useEffect(() => {
+    return () => {
+      if (refs.current.reactor) stopLive();
+    };
+  }, []);
+
   function cyclePersona(d: number) {
     const i = PERSONAS.findIndex((p) => p.id === pid);
     setPid(PERSONAS[(i + d + PERSONAS.length) % PERSONAS.length].id);
@@ -54,14 +61,13 @@ export default function Page() {
     const gate = new ChangeGate({ threshold: 6, minIntervalMs: 1000 });
     const reactor = new LiveReactor();
 
-    let raf = 0;
+    refs.current = { source, player, crowd, reactor, sampleTimer: null, raf: 0, persona };
     const animate = () => {
       crowd.tick(player.amplitude(), performance.now());
-      raf = requestAnimationFrame(animate);
+      refs.current.raf = requestAnimationFrame(animate);
     };
-    animate();
-
-    const sampleTimer = setInterval(() => {
+    refs.current.raf = requestAnimationFrame(animate);
+    refs.current.sampleTimer = setInterval(() => {
       if (gate.shouldSend(source.graySample(), performance.now()))
         reactor.sendFrame(source.captureJpeg());
     }, 250);
@@ -69,15 +75,15 @@ export default function Page() {
     await reactor.start(key, persona, {
       onStatus: (s) => setLive(s === "live"),
       onReaction: (text) => {
-        crowd.setEmotion(reactionToEmotion(text));
-        setCaption(text);
-        setTimeout(() => setCaption(""), 2200);
+        crowd.setEmotion(text ? reactionToEmotion(text) : "gasp");
+        if (text) {
+          setCaption(text);
+          setTimeout(() => setCaption(""), 2200);
+        }
       },
       onAudioChunk: (pcm) => player.play(pcm),
       onError: (m) => console.error("reactor:", m),
     });
-
-    refs.current = { source, player, crowd, reactor, sampleTimer, raf, persona };
   }
 
   function stopLive() {
@@ -188,7 +194,7 @@ export default function Page() {
           />
         )}
         {live && (
-          <button type="button" onClick={stopLive}>
+          <button type="button" onClick={stopLive} disabled={recLeft !== null}>
             stop
           </button>
         )}

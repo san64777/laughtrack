@@ -33,9 +33,12 @@ function b64ToFloat32(b64: string): Float32Array {
 export class LiveReactor {
   private session: any = null;
   private caption = "";
+  private stopped = false;
+  private gotAudio = false;
   constructor(private deps: { connect?: ConnectFn } = {}) {}
 
   async start(apiKey: string, persona: Persona, events: ReactorEvents): Promise<void> {
+    this.stopped = false;
     const connect = this.deps.connect ?? defaultConnect;
     events.onStatus("connecting");
     const config = {
@@ -58,6 +61,12 @@ export class LiveReactor {
         onclose: (e: any) => events.onStatus("idle", e?.reason),
       },
     });
+    if (this.stopped) {
+      try {
+        this.session?.close();
+      } catch {}
+      this.session = null;
+    }
   }
 
   private onMessage(message: any, events: ReactorEvents): void {
@@ -65,16 +74,21 @@ export class LiveReactor {
     if (!sc) return;
     if (sc.interrupted) {
       this.caption = "";
+      this.gotAudio = false;
       return;
     }
     if (sc.outputTranscription?.text) this.caption += sc.outputTranscription.text;
     for (const part of sc.modelTurn?.parts ?? []) {
-      if (part.inlineData?.data) events.onAudioChunk(b64ToFloat32(part.inlineData.data));
+      if (part.inlineData?.data) {
+        events.onAudioChunk(b64ToFloat32(part.inlineData.data));
+        this.gotAudio = true;
+      }
     }
     if (sc.turnComplete) {
       const said = this.caption.trim();
-      if (said) events.onReaction(said);
+      if (said || this.gotAudio) events.onReaction(said);
       this.caption = "";
+      this.gotAudio = false;
     }
   }
 
@@ -88,6 +102,7 @@ export class LiveReactor {
   }
 
   stop(): void {
+    this.stopped = true;
     try {
       this.session?.close();
     } catch {}

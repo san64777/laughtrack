@@ -71,3 +71,18 @@ test("routes transcription to onReaction on turnComplete", async () => {
   f.emit({ serverContent: { turnComplete: true } });
   expect(reactions).toEqual(["Boo"]);
 });
+
+test("reacts on an audio-only turn with no transcription", async () => {
+  const f = fakeConnect();
+  const reactions: string[] = [];
+  const r = new LiveReactor({ connect: f.connect });
+  await r.start("KEY", personaById("hype"), {
+    onStatus: () => {},
+    onReaction: (t) => reactions.push(t),
+    onAudioChunk: () => {},
+    onError: () => {},
+  });
+  f.emit({ serverContent: { modelTurn: { parts: [{ inlineData: { data: "AAAA" } }] } } });
+  f.emit({ serverContent: { turnComplete: true } });
+  expect(reactions).toEqual([""]);
+});

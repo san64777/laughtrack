@@ -18,7 +18,7 @@ export class ChangeGate {
   }
 
   private accept(gray: Float32Array, nowMs: number): boolean {
-    this.prev = gray;
+    this.prev = new Float32Array(gray);
     this.lastSentAt = nowMs;
     return true;
   }

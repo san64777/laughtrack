@@ -56,5 +56,8 @@ export class AudioPlayer {
     this.live = [];
     this.amp = 0;
     if (this.ctx) this.nextStart = this.ctx.currentTime;
+    this.ctx?.close();
+    this.ctx = null;
+    this.dest = null;
   }
 }
