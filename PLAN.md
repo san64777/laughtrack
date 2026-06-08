@@ -4,6 +4,15 @@
 **One-liner:** a tiny on-screen pixel crowd that WATCHES your webcam live and reacts out loud in real time - gasps when you spill coffee, cheers when you nail a riff, heckles your outfit. A live studio audience for your life.
 **Why second:** bigger swing + broader (normal-people) audience + higher ceiling, BUT it depends on a paid API (Gemini Live) and the proactive see-and-react loop is harder. Ship buildbeat first, apply the launch lessons here.
 
+## VERIFIED 2026-06-08 (run wl97cvl50, GO with changes) - read this first
+A 12-agent verification against live Google docs confirmed the engine works, and corrected our notes. The deltas that change this plan:
+- **Model PINNED: `gemini-2.5-flash-native-audio-preview-12-2025` on `v1alpha`.** Only model with proactive audio + native voice + video frames; the newer 3.1 lacks proactive audio. PREVIEW, not "GA at I/O 2026" (that was memory). Keep a model-id switch.
+- **Video input caps at ~1 frame/sec.** The change-gate sends the one salient frame on change; we cannot stream high-FPS. The "600ms" targets below are aspirational - no official latency number exists, so MEASURE on Day 1.
+- **`proactiveAudio` lets the model stay SILENT on irrelevant input; it does NOT self-narrate.** The heckle cadence is UNVERIFIED by docs and is the Day-1 make-or-break spike.
+- **Audio+video sessions die at ~2 min** (socket at ~10 min). Architect around short record-a-clip sessions + reconnect (this is also the product), or enable context-window compression + resumption.
+- **BYO-key confirmed:** browser opens the Live WebSocket directly; raw user key works (each user burns own quota, killing the 429), Google prefers a tiny ephemeral-token backend. Cost (2.5 native-audio, per 1M): audio+video in $3, audio out $12, free tier exists.
+Full verified facts + sources: [verified-stack.md](.claude/memory/verified-stack.md).
+
 ## The demo clip IS the product - build this first
 Target: one 15-20s clip. Pixel crowd at the bottom of the screen, you on webcam, doing everyday things; the crowd reacts unprompted each time.
 - hold up a sandwich -> a voice: "ooooh, gourmet."
@@ -18,7 +27,7 @@ Target: one 15-20s clip. Pixel crowd at the bottom of the screen, you on webcam,
 |---|---|---|
 | Frontend | **Next.js (App Router) + TypeScript**, single page | no auth, no DB |
 | Webcam | `getUserMedia` -> sample frames | client-side change-gate before sending (saves cost + avoids reacting to nothing) |
-| **Engine** | **Gemini Live API** over one WebSocket: webcam frames IN + streaming voice OUT, with **proactive audio** (model decides WHEN to speak) | the capability that makes it magic; VERIFY exact API surface day 1 |
+| **Engine** | **Gemini Live API**, model `gemini-2.5-flash-native-audio-preview-12-2025` on `v1alpha`, over one WebSocket: webcam JPEG frames IN (max ~1 FPS) + streaming PCM voice OUT, with `proactivity:{proactiveAudio:true}` | VERIFIED 2026-06-08; PREVIEW; proactive audio is NOT on the newer 3.1 model. See verified-stack.md |
 | Voice / SFX | Gemini streaming voice for the spoken reactions + a small **SFX bank** (gasp/cheer/laugh/applause/boo) layered via **Web Audio** | |
 | Crowd visual | a **pixel-art sprite sheet** (~6 states: idle/cheer/gasp/laugh/boo/applause) on a `<canvas>`; trigger the state that matches the reaction tag | cute + readable |
 | Key handling | **BYO-key** (user pastes their own Gemini key) for viral scale, OR a server proxy with your key + a hard 60s session cap | decide up front - it shapes the UI |
