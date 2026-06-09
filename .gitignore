@@ -16,3 +16,9 @@ dist
 next-env.d.ts
 .vercel
 *.pem
+
+# AI / internal scaffolding (kept local, out of the repo)
+.claude/
+docs/
+CLAUDE.md
+research/
