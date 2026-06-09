@@ -138,6 +138,20 @@ export default function Page() {
     setProblem("");
     setQuiet(false);
 
+    // 0) create + unlock audio SYNCHRONOUSLY in the tap. iOS only routes Web Audio to the
+    //    speaker if the AudioContext is created and unlocked inside the user gesture, before
+    //    any await - otherwise sound is captured into the recording but never played live.
+    let player: AudioPlayer;
+    try {
+      player = new AudioPlayer();
+      player.start();
+    } catch (e) {
+      setProblem(
+        `Couldn't start audio: ${(e as { message?: string })?.message ?? String(e)}. On iPhone, open this directly in Safari.`,
+      );
+      return;
+    }
+
     // 1) camera (or demo source)
     const source = new FrameSource(dev ? "demo" : "webcam");
     setStatus(dev ? "loading demo scenes..." : "asking for your camera...");
@@ -147,6 +161,7 @@ export default function Page() {
       setStatus("");
       try {
         source.stop();
+        player.stop();
       } catch {}
       setProblem(cameraProblem(e));
       return;
@@ -158,17 +173,14 @@ export default function Page() {
       camRef.current.appendChild(el);
     }
 
-    // 2) audio + crowd (iOS Web Audio is fragile; surface anything that throws instead of dying)
+    // 2) crowd + sfx + reactor (player already created in the gesture above)
     setStatus("warming up the studio...");
     const persona = personaById(pid);
-    let player: AudioPlayer;
     let sfx: SfxBank;
     let crowd: Crowd;
     let gate: ChangeGate;
     let reactor: LiveReactor;
     try {
-      player = new AudioPlayer();
-      player.start();
       sfx = new SfxBank(
         player.context()!,
         [player.context()!.destination, player.recordNode()].filter(Boolean) as AudioNode[],
@@ -182,6 +194,7 @@ export default function Page() {
       setStatus("");
       try {
         source.stop();
+        player.stop();
       } catch {}
       setProblem(
         `Couldn't start the studio: ${(e as { message?: string })?.message ?? String(e)}. On iPhone, open this in Safari directly (not inside another app's browser).`,

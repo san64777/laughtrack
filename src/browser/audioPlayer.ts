@@ -10,8 +10,20 @@ export class AudioPlayer {
     // iOS Safari historically only exposes webkitAudioContext
     const Ctor: typeof AudioContext = window.AudioContext ?? (window as any).webkitAudioContext;
     this.ctx = new Ctor();
+    // iOS: route Web Audio to the speaker even when the mute/ring switch is on
+    try {
+      (navigator as any).audioSession.type = "playback";
+    } catch {}
     // iOS Safari starts the AudioContext suspended; resume it within the go-live gesture
     void this.ctx.resume();
+    // unlock speaker output inside the gesture with a 1-sample silent blip
+    try {
+      const blip = this.ctx.createBuffer(1, 1, 22050);
+      const src = this.ctx.createBufferSource();
+      src.buffer = blip;
+      src.connect(this.ctx.destination);
+      src.start(0);
+    } catch {}
     // createMediaStreamDestination + createAnalyser can be unavailable/flaky on iOS Safari;
     // degrade gracefully so live voice still plays even if these fail (only recording-audio + bounce are lost)
     try {
