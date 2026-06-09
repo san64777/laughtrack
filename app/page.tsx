@@ -11,6 +11,31 @@ import { PERSONAS, personaById } from "@/src/lib/personas";
 import { reactionToEmotion } from "@/src/lib/reactionToEmotion";
 import type { Emotion, PersonaId } from "@/src/lib/types";
 
+// turn a raw getUserMedia error into something a human can act on
+function cameraProblem(e: unknown): string {
+  const name = (e as { name?: string })?.name ?? "";
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return "Camera blocked. Allow camera access for this site (tap the camera/lock icon in your browser bar), then try again.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError")
+    return "No camera found. Open this on a phone or a device that has a camera.";
+  if (name === "NotReadableError")
+    return "Your camera is busy in another app. Close that app, then try again.";
+  const msg = (e as { message?: string })?.message ?? "";
+  return `Couldn't start the camera${name ? ` (${name})` : msg ? `: ${msg}` : ""}. On iPhone use Safari, and make sure this site has camera permission.`;
+}
+
+// turn a raw Gemini/connection error into something a human can act on
+function connectionProblem(m: string): string {
+  const s = (m || "").toLowerCase();
+  if (/api[ _-]?key|unauthor|invalid|permission|401|403/.test(s))
+    return "Your Gemini key was rejected. Paste a fresh key from aistudio.google.com/apikey, then try again.";
+  if (/not found|404|model/.test(s))
+    return "This Gemini model is not available on your key yet. It is a preview model - you may need to enable billing on your Google AI Studio project.";
+  if (/quota|429|resource_exhausted|exhausted/.test(s))
+    return "Your Gemini key is out of quota. Wait a minute, or use a key with quota left.";
+  return `Couldn't reach the crowd: ${m || "unknown"}. Check your key and connection, then try again.`;
+}
+
 export default function Page() {
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
@@ -21,7 +46,10 @@ export default function Page() {
   const [muted, setMuted] = useState(true);
   const [dev, setDev] = useState(false);
   const [reacted, setReacted] = useState(false);
+  const [quiet, setQuiet] = useState(false);
   const [teaser, setTeaser] = useState("ooh");
+  const [status, setStatus] = useState("");
+  const [problem, setProblem] = useState("");
 
   const camRef = useRef<HTMLDivElement>(null);
   const crowdCanvas = useRef<HTMLCanvasElement>(null);
@@ -87,9 +115,31 @@ export default function Page() {
     setPid(PERSONAS[(i + d + PERSONAS.length) % PERSONAS.length].id);
   }
 
+  function changeKey() {
+    setProblem("");
+    setStatus("");
+    localStorage.removeItem("lt_key");
+    setKey("");
+    setHasKey(false);
+  }
+
   async function startLive() {
+    setProblem("");
+    setQuiet(false);
+
+    // 1) camera (or demo source)
     const source = new FrameSource(dev ? "demo" : "webcam");
-    await source.start();
+    setStatus(dev ? "loading demo scenes..." : "asking for your camera...");
+    try {
+      await source.start();
+    } catch (e) {
+      setStatus("");
+      try {
+        source.stop();
+      } catch {}
+      setProblem(cameraProblem(e));
+      return;
+    }
     const el = source.el();
     el.className = "";
     if (camRef.current) {
@@ -97,6 +147,7 @@ export default function Page() {
       camRef.current.appendChild(el);
     }
 
+    // 2) audio (resume is required on iOS Safari, which starts the context suspended)
     const player = new AudioPlayer();
     player.start();
     const sfx = new SfxBank(
@@ -110,44 +161,81 @@ export default function Page() {
     const gate = new ChangeGate({ threshold: 6, minIntervalMs: 1000 });
     const reactor = new LiveReactor();
 
-    refs.current = { source, player, sfx, crowd, reactor, sampleTimer: null, raf: 0, persona };
+    refs.current = {
+      source,
+      player,
+      sfx,
+      crowd,
+      reactor,
+      sampleTimer: null,
+      raf: 0,
+      persona,
+      reacted: false,
+    };
     const animate = () => {
       crowd.tick(player.amplitude(), performance.now());
       refs.current.raf = requestAnimationFrame(animate);
     };
     refs.current.raf = requestAnimationFrame(animate);
     refs.current.sampleTimer = setInterval(() => {
-      if (gate.shouldSend(source.graySample(), performance.now()))
-        reactor.sendFrame(source.captureJpeg());
+      try {
+        if (gate.shouldSend(source.graySample(), performance.now()))
+          reactor.sendFrame(source.captureJpeg());
+      } catch {}
     }, 250);
 
-    await reactor.start(key, persona, {
-      onStatus: (s) => setLive(s === "live"),
-      onReaction: (text) => {
-        const emotion = text ? reactionToEmotion(text) : "gasp";
-        crowd.setEmotion(emotion);
-        refs.current.sfx?.play(emotion);
-        setReacted(true);
-        if (text) {
-          setCaption(text);
-          setTimeout(() => setCaption(""), 2200);
-        }
-      },
-      onAudioChunk: (pcm) => player.play(pcm),
-      onError: (m) => console.error("reactor:", m),
-    });
+    // 3) connect to Gemini Live
+    setStatus("waking the crowd...");
+    try {
+      await reactor.start(key, persona, {
+        onStatus: (s) => {
+          if (s === "live") {
+            setLive(true);
+            setStatus("");
+            // if the crowd stays silent, it usually means quota or a frozen frame, not "boring"
+            refs.current.quietTimer = setTimeout(() => {
+              if (!refs.current.reacted) setQuiet(true);
+            }, 9000);
+          }
+        },
+        onReaction: (text) => {
+          refs.current.reacted = true;
+          setReacted(true);
+          setQuiet(false);
+          const emotion = text ? reactionToEmotion(text) : "gasp";
+          crowd.setEmotion(emotion);
+          refs.current.sfx?.play(emotion);
+          if (text) {
+            setCaption(text);
+            setTimeout(() => setCaption(""), 2200);
+          }
+        },
+        onAudioChunk: (pcm) => player.play(pcm),
+        onError: (m) => {
+          setStatus("");
+          setProblem(connectionProblem(m));
+        },
+      });
+    } catch (e) {
+      setStatus("");
+      setProblem(connectionProblem((e as { message?: string })?.message ?? String(e)));
+      stopLive();
+    }
   }
 
   function stopLive() {
     const r = refs.current;
     if (!r.reactor) return;
     clearInterval(r.sampleTimer);
+    clearTimeout(r.quietTimer);
     cancelAnimationFrame(r.raf);
     r.reactor.stop();
     r.player.stop();
     r.source.stop();
     setLive(false);
     setReacted(false);
+    setQuiet(false);
+    setStatus("");
   }
 
   async function record() {
@@ -245,10 +333,33 @@ export default function Page() {
           </div>
         )}
         <div className={`lt-caption ${caption ? "show" : ""}`}>{caption}</div>
-        {live && !reacted && <div className="lt-nudge">do something - they're watching</div>}
-        <div className="lt-pit">
-          <canvas ref={crowdCanvas} width={420} height={150} />
-        </div>
+        {live && !reacted && (
+          <div className="lt-nudge">
+            {quiet
+              ? "the crowd is quiet - try a big, obvious move (wave, hold something up). still nothing? your key may be out of quota."
+              : "do something - they're watching"}
+          </div>
+        )}
+
+        {problem ? (
+          <div className="lt-overlay">
+            <div className="lt-problem">{problem}</div>
+            <div className="lt-overlay-actions">
+              <button type="button" className="lt-go sm" onClick={startLive}>
+                try again
+              </button>
+              <button type="button" className="lt-ghost" onClick={changeKey}>
+                change key
+              </button>
+            </div>
+          </div>
+        ) : status ? (
+          <div className="lt-overlay">
+            <div className="lt-statusmsg">
+              <span className="spin" /> {status}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="lt-controls">

@@ -8,6 +8,8 @@ export class AudioPlayer {
 
   start(): MediaStream {
     this.ctx = new AudioContext();
+    // iOS Safari starts the AudioContext suspended; resume it within the go-live gesture
+    void this.ctx.resume();
     this.dest = this.ctx.createMediaStreamDestination();
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 256;

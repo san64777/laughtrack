@@ -35,10 +35,12 @@ export class LiveReactor {
   private caption = "";
   private stopped = false;
   private gotAudio = false;
+  private everLive = false;
   constructor(private deps: { connect?: ConnectFn } = {}) {}
 
   async start(apiKey: string, persona: Persona, events: ReactorEvents): Promise<void> {
     this.stopped = false;
+    this.everLive = false;
     const connect = this.deps.connect ?? defaultConnect;
     events.onStatus("connecting");
     const config = {
@@ -55,10 +57,17 @@ export class LiveReactor {
       model: LIVE_MODEL,
       config,
       callbacks: {
-        onopen: () => events.onStatus("live"),
+        onopen: () => {
+          this.everLive = true;
+          events.onStatus("live");
+        },
         onmessage: (m: any) => this.onMessage(m, events),
         onerror: (e: any) => events.onError(e?.message ?? String(e)),
-        onclose: (e: any) => events.onStatus("idle", e?.reason),
+        onclose: (e: any) => {
+          events.onStatus("idle", e?.reason);
+          if (!this.stopped && !this.everLive)
+            events.onError(`connection closed${e?.reason ? `: ${e.reason}` : ""}`);
+        },
       },
     });
     if (this.stopped) {
