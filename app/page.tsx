@@ -4,6 +4,7 @@ import { AudioPlayer } from "@/src/browser/audioPlayer";
 import { Crowd } from "@/src/browser/crowd";
 import { FrameSource } from "@/src/browser/frameSource";
 import { downloadBlob, Recorder } from "@/src/browser/recorder";
+import { SfxBank } from "@/src/browser/sfx";
 import { ChangeGate } from "@/src/lib/changeGate";
 import { LiveReactor } from "@/src/lib/liveReactor";
 import { PERSONAS, personaById } from "@/src/lib/personas";
@@ -17,6 +18,8 @@ export default function Page() {
   const [pid, setPid] = useState<PersonaId>("heckle");
   const [caption, setCaption] = useState("");
   const [recLeft, setRecLeft] = useState<number | null>(null);
+  const [muted, setMuted] = useState(true);
+  const [dev, setDev] = useState(false);
 
   const camRef = useRef<HTMLDivElement>(null);
   const crowdCanvas = useRef<HTMLCanvasElement>(null);
@@ -28,6 +31,10 @@ export default function Page() {
       setKey(k);
       setHasKey(true);
     }
+  }, []);
+
+  useEffect(() => {
+    setDev(new URLSearchParams(location.search).has("dev"));
   }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: stopLive only touches the refs object and stable state setters
@@ -43,7 +50,6 @@ export default function Page() {
   }
 
   async function startLive() {
-    const dev = new URLSearchParams(location.search).has("dev");
     const source = new FrameSource(dev ? "demo" : "webcam");
     await source.start();
     const el = source.el();
@@ -55,13 +61,18 @@ export default function Page() {
 
     const player = new AudioPlayer();
     player.start();
+    const sfx = new SfxBank(
+      player.context()!,
+      [player.context()!.destination, player.recordNode()!].filter(Boolean) as AudioNode[],
+      muted,
+    );
     const persona = personaById(pid);
     if (!crowdCanvas.current) return;
     const crowd = new Crowd(crowdCanvas.current, persona.palette);
     const gate = new ChangeGate({ threshold: 6, minIntervalMs: 1000 });
     const reactor = new LiveReactor();
 
-    refs.current = { source, player, crowd, reactor, sampleTimer: null, raf: 0, persona };
+    refs.current = { source, player, sfx, crowd, reactor, sampleTimer: null, raf: 0, persona };
     const animate = () => {
       crowd.tick(player.amplitude(), performance.now());
       refs.current.raf = requestAnimationFrame(animate);
@@ -75,7 +86,9 @@ export default function Page() {
     await reactor.start(key, persona, {
       onStatus: (s) => setLive(s === "live"),
       onReaction: (text) => {
-        crowd.setEmotion(text ? reactionToEmotion(text) : "gasp");
+        const emotion = text ? reactionToEmotion(text) : "gasp";
+        crowd.setEmotion(emotion);
+        refs.current.sfx?.play(emotion);
         if (text) {
           setCaption(text);
           setTimeout(() => setCaption(""), 2200);
@@ -182,6 +195,21 @@ export default function Page() {
             {">"}
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            const m = !muted;
+            setMuted(m);
+            refs.current.sfx?.setMuted(m);
+          }}
+        >
+          {muted ? "SFX off" : "SFX on"}
+        </button>
+        {dev && live && (
+          <button type="button" onClick={() => refs.current.source?.nextDemo()}>
+            next scene
+          </button>
+        )}
         {!live ? (
           <button type="button" className="lt-rec" onClick={startLive} title="start" />
         ) : (

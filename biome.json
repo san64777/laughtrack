@@ -5,6 +5,7 @@
       "**",
       "!**/spike",
       "!**/.next",
+      "!**/.vercel",
       "!**/node_modules",
       "!**/.superpowers",
       "!**/.claude"
