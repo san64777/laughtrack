@@ -135,6 +135,8 @@ export default function Page() {
   }
 
   async function startLive() {
+    // tear down any prior session first so a retry never leaks timers, audio graphs or camera tracks
+    if (refs.current.reactor) stopLive();
     setProblem("");
     setQuiet(false);
 
@@ -235,6 +237,13 @@ export default function Page() {
       );
     }, 700);
 
+    // iOS suspends/interrupts the audio when the screen locks or you switch apps; wake the speaker
+    // the moment the page returns to the foreground
+    refs.current.onVis = () => {
+      if (document.visibilityState === "visible") refs.current.player?.resume?.();
+    };
+    document.addEventListener("visibilitychange", refs.current.onVis);
+
     // 3) connect to Gemini Live
     setStatus("waking the crowd...");
     try {
@@ -264,7 +273,9 @@ export default function Page() {
         },
         onAudioChunk: (pcm) => player.play(pcm),
         onError: (m) => {
-          setStatus("");
+          // a connect failure OR a mid-session drop: tear the session down (stop sampling a dead
+          // socket, release camera/audio) and show the reason with a try-again button
+          stopLive();
           setProblem(connectionProblem(m));
         },
       });
@@ -282,9 +293,11 @@ export default function Page() {
     clearInterval(r.diagTimer);
     clearTimeout(r.quietTimer);
     cancelAnimationFrame(r.raf);
+    if (r.onVis) document.removeEventListener("visibilitychange", r.onVis);
     r.reactor.stop();
     r.player.stop();
     r.source.stop();
+    r.reactor = null;
     setLive(false);
     setReacted(false);
     setQuiet(false);
@@ -300,28 +313,35 @@ export default function Page() {
     const countdown = setInterval(() => setRecLeft((n) => (n && n > 1 ? n - 1 : null)), 1000);
     const W = 540;
     const H = 960;
-    const blob = await rec.record(
-      {
-        width: W,
-        height: H,
-        audio: r.player.stream(),
-        draw: (ctx) => {
-          ctx.fillStyle = "#0c0913";
-          ctx.fillRect(0, 0, W, H);
-          const camH = H * 0.66;
-          ctx.save();
-          ctx.translate(W, 0);
-          ctx.scale(-1, 1);
-          ctx.drawImage(r.source.el(), 0, 0, W, camH);
-          ctx.restore();
-          if (crowdCanvas.current) ctx.drawImage(crowdCanvas.current, 0, camH, W, H - camH);
+    try {
+      const blob = await rec.record(
+        {
+          width: W,
+          height: H,
+          audio: r.player.stream(),
+          draw: (ctx) => {
+            ctx.fillStyle = "#0c0913";
+            ctx.fillRect(0, 0, W, H);
+            const camH = H * 0.66;
+            ctx.save();
+            ctx.translate(W, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(r.source.el(), 0, 0, W, camH);
+            ctx.restore();
+            if (crowdCanvas.current) ctx.drawImage(crowdCanvas.current, 0, camH, W, H - camH);
+          },
         },
-      },
-      15000,
-    );
-    clearInterval(countdown);
-    setRecLeft(null);
-    downloadBlob(blob, `laughtrack-${Date.now()}.${blob.type.includes("mp4") ? "mp4" : "webm"}`);
+        15000,
+      );
+      downloadBlob(blob, `laughtrack-${Date.now()}.${blob.type.includes("mp4") ? "mp4" : "webm"}`);
+    } catch (e) {
+      setProblem(
+        `Couldn't save the clip: ${(e as { message?: string })?.message ?? String(e)}. Keep the screen on while recording, then try again.`,
+      );
+    } finally {
+      clearInterval(countdown);
+      setRecLeft(null);
+    }
   }
 
   if (!hasKey) {

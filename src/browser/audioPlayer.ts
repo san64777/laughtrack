@@ -11,11 +11,18 @@ export class AudioPlayer {
     const Ctor: typeof AudioContext = window.AudioContext ?? (window as any).webkitAudioContext;
     this.ctx = new Ctor();
     // iOS: route Web Audio to the speaker even when the mute/ring switch is on
-    try {
-      (navigator as any).audioSession.type = "playback";
-    } catch {}
+    this.applyPlaybackSession();
     // iOS Safari starts the AudioContext suspended; resume it within the go-live gesture
     void this.ctx.resume();
+    // iOS drops the context into "suspended"/"interrupted" on lock, calls, Control Center or app
+    // switch and never auto-resumes; re-resume (and re-assert playback) whenever that happens
+    this.ctx.onstatechange = () => {
+      const st = this.ctx?.state;
+      if (st && st !== "running" && st !== "closed") {
+        this.applyPlaybackSession();
+        void this.ctx?.resume();
+      }
+    };
     // unlock speaker output inside the gesture with a 1-sample silent blip
     try {
       const blip = this.ctx.createBuffer(1, 1, 22050);
@@ -42,9 +49,24 @@ export class AudioPlayer {
     return this.dest?.stream ?? new MediaStream();
   }
 
-  /** "running" | "suspended" | "closed" | "none" - shown in the on-screen diagnostic */
+  /** "running" | "suspended" | "interrupted" | "closed" | "none" - shown in the on-screen diagnostic */
   state(): string {
     return this.ctx?.state ?? "none";
+  }
+
+  /** iOS: play Web Audio through the speaker even with the mute/ring switch on */
+  private applyPlaybackSession(): void {
+    try {
+      (navigator as any).audioSession.type = "playback";
+    } catch {}
+  }
+
+  /** wake the speaker when the page returns to the foreground (call on visibilitychange) */
+  resume(): void {
+    if (!this.ctx) return;
+    this.applyPlaybackSession();
+    void this.ctx.resume();
+    if (this.nextStart < this.ctx.currentTime) this.nextStart = this.ctx.currentTime;
   }
 
   play(f: Float32Array): void {

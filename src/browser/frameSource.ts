@@ -32,11 +32,17 @@ export class FrameSource {
   async start(): Promise<void> {
     if (this.mode === "webcam") {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
+        // facingMode "user" so iOS opens the FRONT (selfie) camera - the preview + recording are
+        // both mirrored, which only makes sense for the front camera; "ideal" still resolves on a
+        // single-camera device instead of throwing
+        video: { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
       this.video.srcObject = this.stream;
       await this.video.play();
+      // play() resolving only means playback was permitted, not that a frame is decoded; wait for
+      // real pixels so the first frames streamed to the model are not black (iOS camera warms slowly)
+      await this.videoReady();
     } else {
       this.renderDemo();
     }
@@ -44,6 +50,24 @@ export class FrameSource {
 
   el(): HTMLVideoElement | HTMLCanvasElement {
     return this.mode === "webcam" ? this.video : this.board;
+  }
+
+  /** true once there is a real frame to draw (demo is always ready) */
+  private ready(): boolean {
+    return this.mode === "demo" || (this.video.readyState >= 2 && this.video.videoWidth > 0);
+  }
+
+  private videoReady(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.ready()) return resolve();
+      const done = () => {
+        this.video.removeEventListener("loadeddata", done);
+        resolve();
+      };
+      this.video.addEventListener("loadeddata", done);
+      // never hang the go-live flow if the event is missed
+      setTimeout(done, 1500);
+    });
   }
 
   nextDemo(): void {
@@ -63,6 +87,9 @@ export class FrameSource {
   }
 
   graySample(): Float32Array {
+    // skip black/garbage frames before the camera has decoded a frame (the all-zero sample reads
+    // as "no change" to the gate, so no empty frame gets sent to the model)
+    if (!this.ready()) return new Float32Array(GW * GH);
     const g = this.gray.getContext("2d")!;
     g.drawImage(this.el(), 0, 0, GW, GH);
     const d = g.getImageData(0, 0, GW, GH).data;

@@ -35,19 +35,57 @@ export class Recorder {
     const mime = pickMime();
     const stream = this.canvas.captureStream(30);
     for (const tr of src.audio.getAudioTracks()) stream.addTrack(tr);
-    const rec = new MediaRecorder(stream, { mimeType: mime });
     const chunks: BlobPart[] = [];
-    rec.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-    };
 
-    return await new Promise<Blob>((resolve) => {
-      rec.onstop = () => {
+    return await new Promise<Blob>((resolve, reject) => {
+      let rec: MediaRecorder;
+      try {
+        // Safari can report isTypeSupported() true yet throw at construction; treat as unsupported
+        rec = new MediaRecorder(stream, { mimeType: mime });
+      } catch (e) {
         cancelAnimationFrame(this.raf);
-        resolve(new Blob(chunks, { type: mime }));
+        reject(e instanceof Error ? e : new Error("recording is not supported on this browser"));
+        return;
+      }
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
       };
-      rec.start();
-      setTimeout(() => rec.state !== "inactive" && rec.stop(), ms);
+      // iOS pauses the canvas draw loop when the page hides; stop early so the user keeps the good
+      // prefix instead of a frozen or never-finalized clip
+      const onHide = () => {
+        if (document.hidden && rec.state !== "inactive") rec.stop();
+      };
+      document.addEventListener("visibilitychange", onHide);
+      const cleanup = () => {
+        cancelAnimationFrame(this.raf);
+        document.removeEventListener("visibilitychange", onHide);
+      };
+      rec.onstop = () => {
+        cleanup();
+        const blob = new Blob(chunks, { type: mime });
+        // a 0-byte blob is the documented iOS MediaRecorder failure; fail loudly, do not "save" it
+        if (blob.size === 0) {
+          reject(new Error("the recorder produced an empty clip"));
+          return;
+        }
+        resolve(blob);
+      };
+      try {
+        // a 250ms timeslice makes iOS flush data incrementally and write a valid moov atom
+        rec.start(250);
+      } catch (e) {
+        cleanup();
+        reject(e instanceof Error ? e : new Error("could not start recording"));
+        return;
+      }
+      setTimeout(() => {
+        if (rec.state !== "inactive") {
+          try {
+            rec.requestData();
+          } catch {}
+          rec.stop();
+        }
+      }, ms);
     });
   }
 }

@@ -65,8 +65,14 @@ export class LiveReactor {
         onerror: (e: any) => events.onError(e?.message ?? String(e)),
         onclose: (e: any) => {
           events.onStatus("idle", e?.reason);
-          if (!this.stopped && !this.everLive)
-            events.onError(`connection closed${e?.reason ? `: ${e.reason}` : ""}`);
+          if (this.stopped) return;
+          // surface ANY non-deliberate close, including a drop AFTER going live (iOS suspends and
+          // closes the socket on screen-lock/app-switch, often without warning) so the UI can react
+          events.onError(
+            this.everLive
+              ? `the live connection dropped${e?.reason ? `: ${e.reason}` : ""}`
+              : `connection closed${e?.reason ? `: ${e.reason}` : ""}`,
+          );
         },
       },
     });
