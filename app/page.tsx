@@ -9,7 +9,7 @@ import { ChangeGate } from "@/src/lib/changeGate";
 import { LiveReactor } from "@/src/lib/liveReactor";
 import { PERSONAS, personaById } from "@/src/lib/personas";
 import { reactionToEmotion } from "@/src/lib/reactionToEmotion";
-import type { PersonaId } from "@/src/lib/types";
+import type { Emotion, PersonaId } from "@/src/lib/types";
 
 export default function Page() {
   const [key, setKey] = useState("");
@@ -20,9 +20,12 @@ export default function Page() {
   const [recLeft, setRecLeft] = useState<number | null>(null);
   const [muted, setMuted] = useState(true);
   const [dev, setDev] = useState(false);
+  const [reacted, setReacted] = useState(false);
+  const [teaser, setTeaser] = useState("ooh");
 
   const camRef = useRef<HTMLDivElement>(null);
   const crowdCanvas = useRef<HTMLCanvasElement>(null);
+  const landingCanvas = useRef<HTMLCanvasElement>(null);
   const refs = useRef<any>({});
 
   useEffect(() => {
@@ -43,6 +46,41 @@ export default function Page() {
       if (refs.current.reactor) stopLive();
     };
   }, []);
+
+  // a live teaser crowd on the landing: emotes on a loop so you see the magic before committing
+  useEffect(() => {
+    if (hasKey || !landingCanvas.current) return;
+    const palette = ["#ffd23f", "#ff5d73", "#4fd6a3", "#7aa2ff", "#c98bff", "#ff9f43"];
+    const crowd = new Crowd(landingCanvas.current, palette, 6);
+    const beats: Array<[Emotion, string]> = [
+      ["cheer", "yesss"],
+      ["gasp", "no way"],
+      ["laugh", "haha"],
+      ["applause", "bravo"],
+      ["boo", "booo"],
+    ];
+    let i = 0;
+    crowd.setEmotion(beats[0][0]);
+    setTeaser(beats[0][1]);
+    const cycle = setInterval(() => {
+      i = (i + 1) % beats.length;
+      crowd.setEmotion(beats[i][0]);
+      setTeaser(beats[i][1]);
+    }, 1700);
+    let raf = 0;
+    const t0 = performance.now();
+    const loop = () => {
+      const t = performance.now();
+      const amp = 0.26 * (0.5 + 0.5 * Math.sin((t - t0) / 130));
+      crowd.tick(amp, t);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      clearInterval(cycle);
+      cancelAnimationFrame(raf);
+    };
+  }, [hasKey]);
 
   function cyclePersona(d: number) {
     const i = PERSONAS.findIndex((p) => p.id === pid);
@@ -89,6 +127,7 @@ export default function Page() {
         const emotion = text ? reactionToEmotion(text) : "gasp";
         crowd.setEmotion(emotion);
         refs.current.sfx?.play(emotion);
+        setReacted(true);
         if (text) {
           setCaption(text);
           setTimeout(() => setCaption(""), 2200);
@@ -108,6 +147,7 @@ export default function Page() {
     r.player.stop();
     r.source.stop();
     setLive(false);
+    setReacted(false);
   }
 
   async function record() {
@@ -124,9 +164,9 @@ export default function Page() {
         height: H,
         audio: r.player.stream(),
         draw: (ctx) => {
-          ctx.fillStyle = "#0c0d12";
+          ctx.fillStyle = "#0c0913";
           ctx.fillRect(0, 0, W, H);
-          const camH = H * 0.64;
+          const camH = H * 0.66;
           ctx.save();
           ctx.translate(W, 0);
           ctx.scale(-1, 1);
@@ -144,18 +184,28 @@ export default function Page() {
 
   if (!hasKey) {
     return (
-      <div className="lt-root">
-        <h1>laughtrack</h1>
+      <main className="lt-landing">
+        <div className="tally" data-on="true">
+          <span className="dot" /> on air
+        </div>
+        <h1 className="lt-word">
+          laugh<b>track</b>
+        </h1>
+        <p className="lt-tag">a live studio audience for your life</p>
+        <p className="lt-sub">
+          a tiny pixel crowd watches your camera and reacts out loud - gasp, cheer, heckle. all
+          live.
+        </p>
+        <div className="lt-teaser">
+          <div className="lt-teaser-cap">{teaser}</div>
+          <canvas ref={landingCanvas} width={420} height={150} />
+        </div>
         <div className="lt-key">
-          <p className="lt-note">
-            Paste your Gemini API key (free at aistudio.google.com/apikey). It stays in this browser
-            and goes straight to Google.
-          </p>
           <input
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder="Gemini API key"
+            placeholder="paste your Gemini key"
           />
           <button
             type="button"
@@ -168,7 +218,13 @@ export default function Page() {
             Enter the studio
           </button>
         </div>
-      </div>
+        <p className="lt-note">
+          free Gemini key, stays in your browser, never leaves your device.{" "}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+            grab one in 60s
+          </a>
+        </p>
+      </main>
     );
   }
 
@@ -177,54 +233,81 @@ export default function Page() {
       <div className="lt-frame">
         <div className="lt-cam mirror" ref={camRef} />
         <div className="lt-chip">{personaById(pid).label}</div>
-        {recLeft !== null && (
-          <div className="lt-timer">rec 0:{String(recLeft).padStart(2, "0")}</div>
+        {recLeft !== null ? (
+          <div className="lt-status rec">
+            <span className="dot" /> REC 0:{String(recLeft).padStart(2, "0")}
+          </div>
+        ) : (
+          <div className="lt-status">
+            <span className="tally" data-on={live ? "true" : "false"}>
+              <span className="dot" /> {live ? "on air" : "off air"}
+            </span>
+          </div>
         )}
         <div className={`lt-caption ${caption ? "show" : ""}`}>{caption}</div>
+        {live && !reacted && <div className="lt-nudge">do something - they're watching</div>}
         <div className="lt-pit">
           <canvas ref={crowdCanvas} width={420} height={150} />
         </div>
       </div>
+
       <div className="lt-controls">
         <div className="lt-persona">
-          <button type="button" onClick={() => cyclePersona(-1)} disabled={live}>
-            {"<"}
+          <button type="button" className="arrow" onClick={() => cyclePersona(-1)} disabled={live}>
+            {"‹"}
           </button>
           <span>{personaById(pid).label}</span>
-          <button type="button" onClick={() => cyclePersona(1)} disabled={live}>
-            {">"}
+          <button type="button" className="arrow" onClick={() => cyclePersona(1)} disabled={live}>
+            {"›"}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            const m = !muted;
-            setMuted(m);
-            refs.current.sfx?.setMuted(m);
-          }}
-        >
-          {muted ? "SFX off" : "SFX on"}
-        </button>
-        {dev && live && (
-          <button type="button" onClick={() => refs.current.source?.nextDemo()}>
-            next scene
-          </button>
-        )}
+
         {!live ? (
-          <button type="button" className="lt-rec" onClick={startLive} title="start" />
-        ) : (
-          <button
-            type="button"
-            className="lt-rec"
-            onClick={record}
-            disabled={recLeft !== null}
-            title="record 15s"
-          />
-        )}
-        {live && (
-          <button type="button" onClick={stopLive} disabled={recLeft !== null}>
-            stop
+          <button type="button" className="lt-go" onClick={startLive}>
+            <span className="tri" /> go live
           </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="lt-ghost"
+              data-on={muted ? "false" : "true"}
+              onClick={() => {
+                const m = !muted;
+                setMuted(m);
+                refs.current.sfx?.setMuted(m);
+              }}
+            >
+              SFX {muted ? "off" : "on"}
+            </button>
+            {dev && (
+              <button
+                type="button"
+                className="lt-ghost"
+                onClick={() => refs.current.source?.nextDemo()}
+              >
+                next scene
+              </button>
+            )}
+            <button
+              type="button"
+              className="lt-record"
+              data-rec={recLeft !== null ? "true" : "false"}
+              onClick={record}
+              disabled={recLeft !== null}
+            >
+              <span className="glyph" />{" "}
+              {recLeft !== null ? `0:${String(recLeft).padStart(2, "0")}` : "REC 15s"}
+            </button>
+            <button
+              type="button"
+              className="lt-ghost"
+              onClick={stopLive}
+              disabled={recLeft !== null}
+            >
+              stop
+            </button>
+          </>
         )}
       </div>
     </div>
