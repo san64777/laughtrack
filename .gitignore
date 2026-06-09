@@ -22,3 +22,7 @@ next-env.d.ts
 docs/
 CLAUDE.md
 research/
+
+# prototype + internal plan (kept local)
+PLAN.md
+spike/
