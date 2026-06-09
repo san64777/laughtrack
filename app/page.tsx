@@ -36,6 +36,16 @@ function connectionProblem(m: string): string {
   return `Couldn't reach the crowd: ${m || "unknown"}. Check your key and connection, then try again.`;
 }
 
+// a short word so an audio-only reaction (no transcript) is still visible as a caption
+const EMO_WORD: Record<Emotion, string> = {
+  idle: "",
+  cheer: "yesss",
+  gasp: "ooh",
+  laugh: "haha",
+  boo: "booo",
+  applause: "bravo",
+};
+
 export default function Page() {
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
@@ -50,6 +60,7 @@ export default function Page() {
   const [teaser, setTeaser] = useState("ooh");
   const [status, setStatus] = useState("");
   const [problem, setProblem] = useState("");
+  const [diag, setDiag] = useState("");
 
   const camRef = useRef<HTMLDivElement>(null);
   const crowdCanvas = useRef<HTMLCanvasElement>(null);
@@ -147,19 +158,36 @@ export default function Page() {
       camRef.current.appendChild(el);
     }
 
-    // 2) audio (resume is required on iOS Safari, which starts the context suspended)
-    const player = new AudioPlayer();
-    player.start();
-    const sfx = new SfxBank(
-      player.context()!,
-      [player.context()!.destination, player.recordNode()!].filter(Boolean) as AudioNode[],
-      muted,
-    );
+    // 2) audio + crowd (iOS Web Audio is fragile; surface anything that throws instead of dying)
+    setStatus("warming up the studio...");
     const persona = personaById(pid);
-    if (!crowdCanvas.current) return;
-    const crowd = new Crowd(crowdCanvas.current, persona.palette);
-    const gate = new ChangeGate({ threshold: 6, minIntervalMs: 1000 });
-    const reactor = new LiveReactor();
+    let player: AudioPlayer;
+    let sfx: SfxBank;
+    let crowd: Crowd;
+    let gate: ChangeGate;
+    let reactor: LiveReactor;
+    try {
+      player = new AudioPlayer();
+      player.start();
+      sfx = new SfxBank(
+        player.context()!,
+        [player.context()!.destination, player.recordNode()].filter(Boolean) as AudioNode[],
+        muted,
+      );
+      if (!crowdCanvas.current) throw new Error("crowd canvas not ready - reload the page");
+      crowd = new Crowd(crowdCanvas.current, persona.palette);
+      gate = new ChangeGate({ threshold: 6, minIntervalMs: 1000 });
+      reactor = new LiveReactor();
+    } catch (e) {
+      setStatus("");
+      try {
+        source.stop();
+      } catch {}
+      setProblem(
+        `Couldn't start the studio: ${(e as { message?: string })?.message ?? String(e)}. On iPhone, open this in Safari directly (not inside another app's browser).`,
+      );
+      return;
+    }
 
     refs.current = {
       source,
@@ -168,9 +196,12 @@ export default function Page() {
       crowd,
       reactor,
       sampleTimer: null,
+      diagTimer: null,
       raf: 0,
       persona,
       reacted: false,
+      frames: 0,
+      reactions: 0,
     };
     const animate = () => {
       crowd.tick(player.amplitude(), performance.now());
@@ -179,10 +210,17 @@ export default function Page() {
     refs.current.raf = requestAnimationFrame(animate);
     refs.current.sampleTimer = setInterval(() => {
       try {
-        if (gate.shouldSend(source.graySample(), performance.now()))
+        if (gate.shouldSend(source.graySample(), performance.now())) {
           reactor.sendFrame(source.captureJpeg());
+          refs.current.frames++;
+        }
       } catch {}
     }, 250);
+    refs.current.diagTimer = setInterval(() => {
+      setDiag(
+        `frames ${refs.current.frames} | reactions ${refs.current.reactions} | audio ${refs.current.player?.state?.() ?? "?"}`,
+      );
+    }, 700);
 
     // 3) connect to Gemini Live
     setStatus("waking the crowd...");
@@ -199,16 +237,17 @@ export default function Page() {
           }
         },
         onReaction: (text) => {
+          refs.current.reactions++;
           refs.current.reacted = true;
           setReacted(true);
           setQuiet(false);
           const emotion = text ? reactionToEmotion(text) : "gasp";
           crowd.setEmotion(emotion);
           refs.current.sfx?.play(emotion);
-          if (text) {
-            setCaption(text);
-            setTimeout(() => setCaption(""), 2200);
-          }
+          // always show a caption so a reaction is visible even when there is no transcript / no sound
+          const cap = text || EMO_WORD[emotion] || "ooh";
+          setCaption(cap);
+          setTimeout(() => setCaption(""), 2200);
         },
         onAudioChunk: (pcm) => player.play(pcm),
         onError: (m) => {
@@ -227,6 +266,7 @@ export default function Page() {
     const r = refs.current;
     if (!r.reactor) return;
     clearInterval(r.sampleTimer);
+    clearInterval(r.diagTimer);
     clearTimeout(r.quietTimer);
     cancelAnimationFrame(r.raf);
     r.reactor.stop();
@@ -236,6 +276,7 @@ export default function Page() {
     setReacted(false);
     setQuiet(false);
     setStatus("");
+    setDiag("");
   }
 
   async function record() {
@@ -340,6 +381,7 @@ export default function Page() {
               : "do something - they're watching"}
           </div>
         )}
+        {live && diag && <div className="lt-diag">{diag}</div>}
 
         {problem ? (
           <div className="lt-overlay">
@@ -360,6 +402,9 @@ export default function Page() {
             </div>
           </div>
         ) : null}
+        <div className="lt-pit">
+          <canvas ref={crowdCanvas} width={420} height={150} />
+        </div>
       </div>
 
       <div className="lt-controls">

@@ -7,25 +7,43 @@ export class AudioPlayer {
   private ampBuf = new Float32Array(0);
 
   start(): MediaStream {
-    this.ctx = new AudioContext();
+    // iOS Safari historically only exposes webkitAudioContext
+    const Ctor: typeof AudioContext = window.AudioContext ?? (window as any).webkitAudioContext;
+    this.ctx = new Ctor();
     // iOS Safari starts the AudioContext suspended; resume it within the go-live gesture
     void this.ctx.resume();
-    this.dest = this.ctx.createMediaStreamDestination();
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.ampBuf = new Float32Array(this.analyser.fftSize);
+    // createMediaStreamDestination + createAnalyser can be unavailable/flaky on iOS Safari;
+    // degrade gracefully so live voice still plays even if these fail (only recording-audio + bounce are lost)
+    try {
+      this.dest = this.ctx.createMediaStreamDestination();
+    } catch {
+      this.dest = null;
+    }
+    try {
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.ampBuf = new Float32Array(this.analyser.fftSize);
+    } catch {
+      this.analyser = null;
+    }
     this.nextStart = this.ctx.currentTime;
-    return this.dest.stream;
+    return this.dest?.stream ?? new MediaStream();
+  }
+
+  /** "running" | "suspended" | "closed" | "none" - shown in the on-screen diagnostic */
+  state(): string {
+    return this.ctx?.state ?? "none";
   }
 
   play(f: Float32Array): void {
-    if (!this.ctx || !this.dest) return;
+    if (!this.ctx) return;
+    void this.ctx.resume();
     const buf = this.ctx.createBuffer(1, f.length, 24000);
     buf.copyToChannel(new Float32Array(f), 0);
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(this.ctx.destination);
-    src.connect(this.dest);
+    if (this.dest) src.connect(this.dest);
     if (this.analyser) src.connect(this.analyser);
     if (this.nextStart < this.ctx.currentTime) this.nextStart = this.ctx.currentTime;
     src.start(this.nextStart);
