@@ -381,7 +381,7 @@ export default function Page() {
               : "do something - they're watching"}
           </div>
         )}
-        {live && diag && <div className="lt-diag">{diag}</div>}
+        {dev && live && diag && <div className="lt-diag">{diag}</div>}
 
         {problem ? (
           <div className="lt-overlay">
